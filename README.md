@@ -12,7 +12,7 @@ Source Code
     ▼
 ┌─────────────────────────────────┐
 │  Stage 1: Source Transformer    │  Text-based source rewriting
-│  (cmd/transformer)              │  9 obfuscation passes
+│  (cmd/transformer)              │  14 obfuscation passes
 └─────────────────────────────────┘
     │
     ▼
@@ -54,9 +54,9 @@ make transformer
 
 ```
                  Normal      Obfuscated
-Size:            2707026     3081170
+Size:            2707026     3098114
 Symbols:         2864        58
-Strings:         15335       4264
+Strings:         15287       4378
 Secret leaks:    1 (LIC-*)   0
 Function names:  visible     0 (good)
 ```
@@ -64,13 +64,13 @@ Function names:  visible     0 (good)
 ## Architecture
 
 ```
-obfuscator/
+go-obfuscation/
 ├── cmd/
 │   ├── transformer/       CLI for source transformation
 │   ├── demoapp/           Target application with embedded secrets
 │   └── inthash/           Integrity hash computation tool
 ├── internal/
-│   └── transform/         Core transformation engine (9 passes)
+│   └── transform/         Core transformation engine (14 passes)
 ├── pkg/
 │   ├── strenc/            AES-256-GCM encrypted string pool
 │   ├── stringcrypt/       XOR string encryption + random identifiers
@@ -78,6 +78,12 @@ obfuscator/
 │   ├── syscallobf/        Obfuscated syscall dispatch
 │   ├── integrity/         Binary .text section integrity verification
 │   ├── antidebug/         Anti-debugging / anti-hooking checks
+│   ├── antidbi/           Frida/DynamoRIO/Pin detection
+│   ├── antivm/            VMware/VirtualBox/QEMU detection
+│   ├── antiemul/          Emulator detection (timing, CPU, memory)
+│   ├── antisandbox/       Sandbox detection (network, environment)
+│   ├── pclntab/           gopclntab section corruption
+│   ├── typewipe/          Go type metadata destruction
 │   └── pageman/           Encrypted memory buffer management
 └── Makefile               Full build pipeline
 ```
@@ -286,6 +292,70 @@ func checkLicense(args ...interface{}) interface{} {
 }
 ```
 
+### 13. MBA (Mixed Boolean-Arithmetic) Expressions
+
+Replaces simple arithmetic and bitwise operations with equivalent complex expressions.
+
+```go
+// Before:
+x = a + b
+
+// After:
+x = ((a ^ b) + 2 * (a & b))
+
+// Other identities:
+// a - b  →  (a ^ b) - 2 * ((^a) & b)
+// a ^ b  →  (a | b) - (a & b)
+// a & b  →  (a | b) - (a ^ b)
+// a | b  →  (a ^ b) + (a & b)
+// ^a     →  (-a) - 1
+```
+
+Each identity is randomly selected per occurrence. Requires symbolic execution or MBA-Blast-level simplification to reduce.
+
+### 14. Constant Blinding
+
+Replaces integer constants with runtime XOR decryption so no literal values appear in the binary.
+
+```go
+// Before:
+x = 42
+
+// After:
+x = _blind(0xDEADBEEF12345678, 0xDEADBEEF1234565A)  // key ^ (key ^ 42)
+
+//go:noinline
+func _blind(a, b uint64) uint64 { return a ^ b }
+```
+
+Each constant gets a unique random key. Skips 0, 1, 2 and single-digit values.
+
+### 15. Long String Splitting
+
+Splits string literals ≥20 characters into randomized 5-9 character chunks joined at runtime.
+
+```go
+// Before:
+key := "sk-proj-FAKE-KEY-1234567890abcdef"
+
+// After:
+key := ("sk-pr" + "oj-FA" + "KE-KE" + "Y-123" + "45678" + "90abc" + "def")
+```
+
+Ensures `strings` on the binary cannot find contiguous sensitive values like API keys, GPG keys, or connection strings. Skips import paths and strings with escape sequences.
+
+### 16. Function Splitting
+
+Splits function bodies with 8+ statements into fragments dispatched via a state machine.
+
+### 17. Basic Block Reordering
+
+Swaps if/else branches (negating conditions) and shuffles switch cases randomly.
+
+### 18. Fake Function Signatures
+
+Injects 2-5 realistic-but-dead `//go:noinline` functions per file to confuse disassembler function boundary detection.
+
 ## Runtime Protection Packages
 
 ### Syscall Obfuscation (`pkg/syscallobf`)
@@ -313,6 +383,10 @@ The anti-debugging package uses these for stealthy `/proc/self/mem` and `/proc/s
 | `checkParentProcess()` | Linux | Reads `/proc/<ppid>/comm`, matches against 12 debugger names |
 | `checkFunctionPrologues()` | Linux | Reads `/proc/self/mem` at function addresses, checks for JMP hooks (0xE9, 0xEB, 0xFF 0x25) and INT3 breakpoints (0xCC) |
 | `scanForBreakpoints()` | Linux | Parses `/proc/self/maps`, reads executable regions, flags ≥8 consecutive 0xCC bytes |
+| `checkHardwareBreakpoints()` | Linux | Reads DR0-DR7 debug registers via ptrace child process |
+| `checkHardwareBreakpoints()` | Windows | `GetThreadContext` with `CONTEXT_DEBUG_REGISTERS` flag |
+| `checkSignalTrap()` | Linux/Darwin | SIGTRAP self-send; if handler doesn't fire, debugger intercepted it |
+| `checkReturnAddresses()` | All | Verifies stack PCs are within binary's code section; flags frida/dynamorio/hook names |
 | Windows anti-debug | Windows | 5 API-based checks + PEB direct read + hardware BP scan + ThreadHideFromDebugger |
 | Hook detection | Darwin | Function prologue scanning via reflect pointers, ARM64 B/BR hook detection, INT3 cluster scanning |
 | Hook detection | Windows | `ReadProcessMemory` prologue scanning |
@@ -360,6 +434,81 @@ integrity.StartMonitor(30*time.Second, func(err error) {
 - Watches multiple `SecureBuffer`s
 - `enforceAutoLock()` — re-locks buffers that exceeded their `autoLock` duration
 - `checkMapsTampering()` — compares `/proc/self/maps` snapshots; force-locks all buffers if the memory map changed (detects debugger attachment / memory mapping modifications)
+
+### Frida/DBI Detection (`pkg/antidbi`)
+
+Detects Dynamic Binary Instrumentation frameworks (Frida, DynamoRIO, Intel Pin).
+
+| Method | Platform | Description |
+|--------|----------|-------------|
+| Memory maps | Linux | Scans `/proc/self/maps` for frida-agent, frida-gadget, dynamorio, libpin |
+| Unix sockets | Linux | Scans `/proc/net/unix` for frida/linjector entries |
+| Frida port | All | TCP connect to 127.0.0.1:27042 (Frida default) |
+| Thread names | Linux | Reads `/proc/self/task/*/comm` for gmain, frida |
+| Loaded images | Darwin | Checks DYLD_INSERT_LIBRARIES + scans lib dirs for frida dylibs |
+| Mach ports | Darwin | Checks for re.frida.server, re.frida.agent Mach ports |
+| Environment | All | Checks LD_PRELOAD, DYLD_* vars for frida/dynamorio/pin |
+
+`AntiAttach()` background goroutine polls every 500ms and exits on detection.
+
+### VM Environment Detection (`pkg/antivm`)
+
+Detects virtual machine environments to prevent sandbox analysis.
+
+| Method | Platform | Description |
+|--------|----------|-------------|
+| DMI/SMBIOS | Linux | Reads `/sys/class/dmi/id/{sys_vendor,product_name}` for VMware/VirtualBox/QEMU/KVM/Xen/Parallels |
+| MAC prefixes | All | Checks `00:0c:29` (VMware), `08:00:27` (VirtualBox), `52:54:00` (QEMU), `00:1c:42` (Parallels) |
+| CPUID | Linux | Checks `/proc/cpuinfo` for hypervisor flag and QEMU CPU model strings |
+| Disk devices | Linux | Reads `/sys/block/*/device/model` for VM disk names |
+| PCI vendors | Linux | Checks vendor IDs: `15ad` (VMware), `80ee` (VirtualBox), `1234` (QEMU) |
+| Timing | All | 100k tight loop; >10ms indicates VM exit overhead |
+| Registry | Windows | Checks `HKLM\SYSTEM\CurrentControlSet\Services\Disk\Enum` |
+| IOKit | Darwin | Checks `system_profiler` and `ioreg` output for VM devices |
+
+### Anti-Emulation Detection (`pkg/antiemul`)
+
+Detects emulated environments via timing and system characteristics.
+
+- **Timing:** 1M iterations must complete in <500ms (emulators are 10-100x slower)
+- **Memory:** System RAM <2GB is suspicious
+- **Uptime:** System uptime <60s suggests freshly booted sandbox
+- **Core count:** <2 CPU cores is suspicious
+- **CPU model:** Checks `/proc/cpuinfo` for QEMU/Virtual/KVM strings (Linux)
+
+### Sandbox Detection (`pkg/antisandbox`)
+
+Detects sandbox-like network and environment characteristics.
+
+- **Interface count:** ≤1 network interface is suspicious
+- **MAC prefixes:** VM-specific MAC address prefixes
+- **Hostname:** Checks for sandbox/cuckoo/malware/analysis in hostname
+- **ARP table:** Empty `/proc/net/arp` is suspicious (Linux)
+
+### gopclntab Corruption (`pkg/pclntab`)
+
+Corrupts the `.gopclntab` section — the #1 tool for Go binary reverse engineering. Breaks IDA/Ghidra Go plugins, GoReSym, and `go tool objdump`.
+
+**Post-compilation (`CorruptPclntab`):**
+- Parses ELF/Mach-O/PE to find `.gopclntab` section
+- XOR-encrypts function name strings with a random key
+- Optionally scrambles magic header bytes and injects fake entries
+
+**Runtime (`RuntimeCorrupt`):**
+- Reads `/proc/self/exe` (Linux) or binary path (macOS)
+- Parses ELF/Mach-O headers in memory to locate pclntab
+- Uses `mprotect` to make section writable, XOR-encrypts names in-place
+- Handles all 3 Go pclntab magic variants (Go 1.2+, 1.16+, 1.18+)
+
+### Type Information Stripping (`pkg/typewipe`)
+
+Destroys Go type metadata that tools like Ghidra's Go type recovery depend on.
+
+- **`.typelink`** section: Zeroed out (type linkage info)
+- **`.itablink`** section: XOR-encrypted (interface method tables)
+- **pclntab names:** Type name strings encrypted via mprotect + XOR
+
+**Warning:** Degrades reflection and panic output. Call during `init()` after the runtime has used type info for setup.
 
 ## Transformer CLI
 

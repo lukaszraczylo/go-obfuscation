@@ -88,6 +88,7 @@ func (t *Transformer) TransformFile(srcPath, dstPath string) error {
 			return fmt.Errorf("encrypt strings %s: %w", srcPath, err)
 		}
 		result = convertConstToVar(result)
+		result = SplitLongStrings(result)
 	}
 
 	if t.config.InjectOpaquePreds {
@@ -129,6 +130,8 @@ func (t *Transformer) TransformFile(srcPath, dstPath string) error {
 	if t.config.JunkStrings {
 		result = t.injectJunkStrings(result)
 	}
+
+	result = SplitLongStrings(result)
 
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(dstPath), err)
