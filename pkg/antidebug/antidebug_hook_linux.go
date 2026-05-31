@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/self-evolving-research/obfuscator/pkg/syscallobf"
+	"github.com/lukaszraczylo/go-obfuscation/pkg/syscallobf"
 )
 
 func checkFunctionPrologues() error {

@@ -1,3 +1,3 @@
-module github.com/self-evolving-research/obfuscator
+module github.com/lukaszraczylo/go-obfuscation
 
 go 1.26.3

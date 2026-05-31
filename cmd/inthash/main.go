@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/self-evolving-research/obfuscator/pkg/integrity"
+	"github.com/lukaszraczylo/go-obfuscation/pkg/integrity"
 )
 
 func main() {

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/self-evolving-research/obfuscator/internal/transform"
+	"github.com/lukaszraczylo/go-obfuscation/internal/transform"
 )
 
 func main() {

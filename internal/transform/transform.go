@@ -17,9 +17,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/self-evolving-research/obfuscator/pkg/strenc"
-	"github.com/self-evolving-research/obfuscator/pkg/stringcrypt"
-	"github.com/self-evolving-research/obfuscator/pkg/vm"
+	"github.com/lukaszraczylo/go-obfuscation/pkg/strenc"
+	"github.com/lukaszraczylo/go-obfuscation/pkg/stringcrypt"
+	"github.com/lukaszraczylo/go-obfuscation/pkg/vm"
 )
 
 type Config struct {
@@ -350,7 +350,7 @@ func (t *Transformer) transformStrings(fset *token.FileSet, f *ast.File, src str
 		src = src[:insertAt] + poolCode.String() + src[insertAt:]
 	}
 
-	src = t.ensureImport(src, "github.com/self-evolving-research/obfuscator/pkg/strenc")
+	src = t.ensureImport(src, "github.com/lukaszraczylo/go-obfuscation/pkg/strenc")
 
 	return src, nil
 }
@@ -1373,8 +1373,8 @@ func (t *Transformer) virtualizeFunctions(src string) string {
 		src = src[:r.start] + r.text + src[r.end:]
 	}
 
-	if !strings.Contains(src, "\"github.com/self-evolving-research/obfuscator/pkg/vm\"") {
-		src = t.ensureImport(src, "github.com/self-evolving-research/obfuscator/pkg/vm")
+	if !strings.Contains(src, "\"github.com/lukaszraczylo/go-obfuscation/pkg/vm\"") {
+		src = t.ensureImport(src, "github.com/lukaszraczylo/go-obfuscation/pkg/vm")
 	}
 
 	return src
