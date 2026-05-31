@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"debug/elf"
 	"debug/macho"
+	"debug/pe"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -97,6 +98,8 @@ func hashTextSection(path string) ([32]byte, error) {
 		return hashTextELF(path)
 	case "darwin":
 		return hashTextMacho(path)
+	case "windows":
+		return hashTextPE(path)
 	default:
 		return hashWholeFile(path)
 	}
@@ -129,6 +132,25 @@ func hashTextMacho(path string) ([32]byte, error) {
 
 	for _, section := range f.Sections {
 		if section.Name == "__text" {
+			data, err := section.Data()
+			if err != nil {
+				return [32]byte{}, err
+			}
+			return sha256.Sum256(data), nil
+		}
+	}
+	return hashWholeFile(path)
+}
+
+func hashTextPE(path string) ([32]byte, error) {
+	f, err := pe.Open(path)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	defer f.Close()
+
+	for _, section := range f.Sections {
+		if section.Name == ".text" {
 			data, err := section.Data()
 			if err != nil {
 				return [32]byte{}, err

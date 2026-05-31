@@ -23,6 +23,8 @@ func main() {
 	seed := flag.Int64("seed", 0, "Build seed for polymorphic output (0 = use current timestamp)")
 	injectBuildID := flag.Bool("buildid", true, "Inject unique build ID constant")
 	virtualizeVM := flag.Bool("vm", true, "Virtualize simple functions into VM bytecode")
+	antiDisasm := flag.Bool("anti-disasm", true, "Inject anti-disassembly patterns")
+	junkStrings := flag.Bool("junk-strings", true, "Inject junk string constants")
 	flag.Parse()
 
 	if *srcDir == "" || *dstDir == "" {
@@ -58,16 +60,18 @@ func main() {
 		BuildSeed:           *seed,
 		InjectBuildID:       *injectBuildID,
 		VirtualizeFunctions: *virtualizeVM,
+		AntiDisassembly:     *antiDisasm,
+		JunkStrings:         *junkStrings,
 	}
 
 	t := transform.New(config)
 
 	fmt.Printf("[transformer] src=%s dst=%s\n", absSrc, absDst)
 	fmt.Printf("[transformer] seed=%d buildid=%v\n", config.BuildSeed, config.InjectBuildID)
-	fmt.Printf("[transformer] strings=%v opaque=%v deadcode=%v bogus=%v flatten=%v vm=%v\n",
+	fmt.Printf("[transformer] strings=%v opaque=%v deadcode=%v bogus=%v flatten=%v vm=%v antidisasm=%v junkstr=%v\n",
 		config.EncryptStrings, config.InjectOpaquePreds,
 		config.InjectDeadCode, config.BogusControlFlow, config.FlattenControl,
-		config.VirtualizeFunctions)
+		config.VirtualizeFunctions, config.AntiDisassembly, config.JunkStrings)
 
 	start := time.Now()
 

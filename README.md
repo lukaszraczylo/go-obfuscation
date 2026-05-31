@@ -54,9 +54,9 @@ make transformer
 
 ```
                  Normal      Obfuscated
-Size:            2707026     3063458
+Size:            2707026     3081170
 Symbols:         2864        58
-Strings:         15335       4302
+Strings:         15335       4264
 Secret leaks:    1 (LIC-*)   0
 Function names:  visible     0 (good)
 ```
@@ -249,6 +249,43 @@ Replaces simple functions with a custom stack-based bytecode VM.
 | SWAP   | 0x1A | i8    | Swap stack positions |
 | ROT    | 0x1B | none  | Rotate top 3 |
 
+**Junk opcodes:** The compiler inserts random junk opcodes (0x1C-0x1F) at ~33% probability between real instructions. The VM silently consumes them via the `default` case, breaking linear disassembly. Use `CompileWith(program, CompileOpts{NoJunk: true})` for deterministic output.
+
+### 10. Anti-Disassembly Injection
+
+Injects junk `[N]byte` variable declarations at ~15% per statement to confuse disassemblers and decompilers.
+
+```go
+// Injected junk — valid Go, but semantically dead
+var _j1 = [7]byte{0x4e, 0x6f, 0x70, 0x65, 0x21, 0x00, 0x00}
+var _j2 = [12]byte{0xde, 0xad, 0xbe, 0xef, ...}
+```
+
+These produce opaque byte sequences in the binary that disassemblers cannot reliably skip.
+
+### 11. Junk String Injection
+
+Adds 4-10 fake string constants per file to dilute the `strings` output and increase noise for analysts.
+
+```go
+var _js1 = "xK9mP2vL8nQ4wR7yT"
+var _js2 = "aB3cD5eF7gH9iJ1kL"
+```
+
+These strings have no semantic effect but increase the string table from ~200 to ~4000+ entries, making secret extraction harder.
+
+### 12. Function Pointer Dispatch
+
+Wraps function calls through function pointer variables to obscure call targets.
+
+```go
+var _fptr0 = checkLicense_obf4721  // function pointer variable
+//go:noinline
+func checkLicense(args ...interface{}) interface{} {
+    return _fptr0(args...)
+}
+```
+
 ## Runtime Protection Packages
 
 ### Syscall Obfuscation (`pkg/syscallobf`)
@@ -257,7 +294,8 @@ Hides syscall numbers from static analysis using XOR-encoded dispatch.
 
 - **Encoding:** Each syscall number is XOR'd with a random `uint64` dispatch key generated once via `sync.Once`
 - **Linux (`syscall_linux.go`):** Wraps `ptrace` (101), `getpid` (39), `kill` (62), `open` (2), `close` (3), `read` (0), `lseek` (8), `mmap` (9), `mprotect` (10) via `syscall.RawSyscall`
-- **Darwin (`syscall_darwin.go`):** Returns `ENOSYS` stubs (platform-specific implementation pending)
+- **Darwin (`syscall_darwin.go`):** Real implementations via encoded SYS_* constants using `syscall.RawSyscall6` — `ptrace`, `sysctl`, `kill`, `getpid`, `mmap`, `mprotect`
+- **Windows (`syscall_windows.go`):** `NtQueryInformationProcess`, `NtSetInformationThread` via `ntdll.dll` LazyDLL; `kernel32` ops; `NtProtectVirtualMemory` for mprotect
 
 The anti-debugging package uses these for stealthy `/proc/self/mem` and `/proc/self/maps` access.
 
@@ -268,12 +306,17 @@ The anti-debugging package uses these for stealthy `/proc/self/mem` and `/proc/s
 | Check | Platform | Description |
 |-------|----------|-------------|
 | `checkPtrace()` | Linux | Reads `/proc/self/status` for non-zero `TracerPid` |
+| `checkPtrace()` | Darwin | `sysctl` P_TRACED flag check + `ptrace(PT_DENY_ATTACH)` |
 | `disableCoreDump()` | Linux | Writes "0" to `/proc/self/coredump_filter` |
 | `checkTiming()` | All | 1M loop iterations must complete in <200ms (detects single-stepping) |
 | `checkEnv()` | All | Checks for `GODEBUG`, `DELVE_LISTENER`, `DEBUGINFOD_URL`, `RR_LOG_FILE`, `_JAVA_OPTIONS`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES` |
 | `checkParentProcess()` | Linux | Reads `/proc/<ppid>/comm`, matches against 12 debugger names |
 | `checkFunctionPrologues()` | Linux | Reads `/proc/self/mem` at function addresses, checks for JMP hooks (0xE9, 0xEB, 0xFF 0x25) and INT3 breakpoints (0xCC) |
 | `scanForBreakpoints()` | Linux | Parses `/proc/self/maps`, reads executable regions, flags ≥8 consecutive 0xCC bytes |
+| Windows anti-debug | Windows | 5 API-based checks + PEB direct read + hardware BP scan + ThreadHideFromDebugger |
+| Hook detection | Darwin | Function prologue scanning via reflect pointers, ARM64 B/BR hook detection, INT3 cluster scanning |
+| Hook detection | Windows | `ReadProcessMemory` prologue scanning |
+| Integrity check | Windows | PE `.text` section SHA-256 hashing via `debug/pe` |
 
 **Background goroutines:**
 - `AntiAttach()` — polls `checkPtrace()` every 500ms, exits with code 66 on detection
@@ -333,8 +376,10 @@ Flags:
   -indirect          Indirect function dispatch (default true)
   -bogus-cfg         Bogus control-flow injection (default true)
   -flatten           Control-flow flattening (default true)
-  -vm                Virtualize simple functions into VM bytecode (default true)
+   -vm                Virtualize simple functions into VM bytecode (default true)
   -buildid           Inject unique build ID constant (default true)
+  -anti-disasm       Inject anti-disassembly junk variables (default true)
+  -junk-strings      Inject fake strings to dilute strings output (default true)
   -seed int          Build seed for polymorphic output (0 = use current timestamp)
 ```
 
@@ -383,7 +428,7 @@ The `make compare` target verifies all of these are hidden in the obfuscated bin
 # Run all package tests
 go test ./pkg/...
 
-# VM tests (22 tests: arithmetic, bitwise, comparisons, jumps, callouts, determinism)
+# VM tests (23 tests: arithmetic, bitwise, comparisons, jumps, callouts, determinism, junk opcodes)
 go test ./pkg/vm/ -v
 
 # Syscall obfuscation tests
@@ -402,6 +447,6 @@ go vet ./...
 ## Limitations
 
 - **Text-based transformation:** The transformer operates on source text, not Go AST. This limits what can be reliably transformed (e.g., type inference for variable hoisting is heuristic).
-- **Darwin syscall stubs:** `pkg/syscallobf` returns `ENOSYS` on macOS. Linux is the primary target for runtime protections.
 - **Garble required:** Stage 2 depends on `mvdan.cc/garble` for name mangling, literal encryption, and binary stripping.
 - **Simple function virtualization only:** The VM currently handles len-comparisons and arithmetic. Complex control flow is not virtualized.
+- **Windows integrity check:** PE `.text` section hashing works but is less battle-tested than ELF/Mach-O paths.

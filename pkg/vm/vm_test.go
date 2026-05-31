@@ -430,7 +430,7 @@ func TestStepwiseExecution(t *testing.T) {
 		{Instr: Instruction{Op: OpHalt}},
 	}
 
-	code := Compile(program)
+	code := CompileWith(program, CompileOpts{NoJunk: true})
 	vm := NewVM(code, nil)
 
 	steps := 0
@@ -461,8 +461,13 @@ func TestXorObfuscationDeterminism(t *testing.T) {
 		{Instr: Instruction{Op: OpHalt}},
 	}
 
-	code1 := Compile(program)
-	code2 := Compile(program)
+	opts := CompileOpts{NoJunk: true}
+	code1 := CompileWith(program, opts)
+	code2 := CompileWith(program, opts)
+
+	if len(code1) != len(code2) {
+		t.Fatalf("bytecode length differs: %d vs %d", len(code1), len(code2))
+	}
 
 	for i := range code1 {
 		if code1[i] != code2[i] {
@@ -487,9 +492,8 @@ func TestBytecodeIsXORed(t *testing.T) {
 		{Instr: Instruction{Op: OpHalt}},
 	}
 
-	code := Compile(program)
+	code := CompileWith(program, CompileOpts{NoJunk: true})
 
-	// First byte should be OpPush ^ dispatchKey, not OpPush itself
 	rawPush := byte(OpPush) ^ dispatchKey
 	if code[0] != rawPush {
 		t.Errorf("expected bytecode[0]=0x%02X (XOR'd PUSH), got 0x%02X", rawPush, code[0])
@@ -498,6 +502,24 @@ func TestBytecodeIsXORed(t *testing.T) {
 	rawHalt := byte(OpHalt) ^ dispatchKey
 	if code[9] != rawHalt {
 		t.Errorf("expected bytecode[9]=0x%02X (XOR'd HALT), got 0x%02X", rawHalt, code[9])
+	}
+}
+
+func TestJunkOpcodesCorrectness(t *testing.T) {
+	program := []LabelledInstr{
+		{Instr: Instruction{Op: OpPush, Args: []int64{10}}},
+		{Instr: Instruction{Op: OpPush, Args: []int64{20}}},
+		{Instr: Instruction{Op: OpAdd}},
+		{Instr: Instruction{Op: OpHalt}},
+	}
+
+	for i := 0; i < 50; i++ {
+		code := Compile(program)
+		vm := NewVM(code, nil)
+		result := vm.Run()
+		if result != 30 {
+			t.Fatalf("iteration %d: expected 30, got %d (bytecode len %d)", i, result, len(code))
+		}
 	}
 }
 

@@ -1,7 +1,9 @@
 package vm
 
 import (
+	"crypto/rand"
 	"fmt"
+	"math/big"
 )
 
 type Instruction struct {
@@ -15,7 +17,15 @@ type LabelledInstr struct {
 	Target string
 }
 
+type CompileOpts struct {
+	NoJunk bool
+}
+
 func Compile(program []LabelledInstr) []byte {
+	return CompileWith(program, CompileOpts{})
+}
+
+func CompileWith(program []LabelledInstr, opts CompileOpts) []byte {
 	labelAddrs := make(map[string]int)
 
 	type fixup struct {
@@ -26,9 +36,16 @@ func Compile(program []LabelledInstr) []byte {
 	var fixups []fixup
 	var bytecode []byte
 
+	junkOpcodes := []Opcode{opJunkA, opJunkB, opJunkC, opJunkD}
+
 	for _, entry := range program {
 		if entry.Label != "" {
 			labelAddrs[entry.Label] = len(bytecode)
+		}
+
+		if !opts.NoJunk && shouldInsertJunk() {
+			junkOp := junkOpcodes[randIntn(len(junkOpcodes))]
+			bytecode = append(bytecode, encodeOp(junkOp))
 		}
 
 		instr := entry.Instr
@@ -63,4 +80,19 @@ func Compile(program []LabelledInstr) []byte {
 	}
 
 	return bytecode
+}
+
+func shouldInsertJunk() bool {
+	return randIntn(3) == 0
+}
+
+func randIntn(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	b, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		return 0
+	}
+	return int(b.Int64())
 }

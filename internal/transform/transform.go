@@ -34,6 +34,8 @@ type Config struct {
 	BuildSeed           int64
 	InjectBuildID       bool
 	VirtualizeFunctions bool
+	AntiDisassembly     bool
+	JunkStrings         bool
 }
 
 func DefaultConfig() Config {
@@ -118,6 +120,14 @@ func (t *Transformer) TransformFile(srcPath, dstPath string) error {
 
 	if t.config.VirtualizeFunctions {
 		result = t.virtualizeFunctions(result)
+	}
+
+	if t.config.AntiDisassembly {
+		result = t.injectAntiDisassembly(result)
+	}
+
+	if t.config.JunkStrings {
+		result = t.injectJunkStrings(result)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
@@ -921,6 +931,7 @@ func (t *Transformer) indirectDispatch(src string) string {
 	lines := strings.Split(src, "\n")
 	var result []string
 	var wrappers []string
+	dispatchIdx := 0
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -981,13 +992,20 @@ func (t *Transformer) indirectDispatch(src string) string {
 		argNames := extractArgNames(argStr)
 		callArgs := strings.Join(argNames, ", ")
 
+		ptrVar := fmt.Sprintf("_fptr%d", dispatchIdx)
+		dispatchIdx++
+
 		if hasReturn {
-			wrapperFunc := fmt.Sprintf("func %s%s %s { return %s(%s) }",
-				funcName, params, returnType, funcName+obfSuffix, callArgs)
+			ptrDecl := fmt.Sprintf("var %s = %s", ptrVar, funcName+obfSuffix)
+			wrappers = append(wrappers, ptrDecl)
+			wrapperFunc := fmt.Sprintf("//go:noinline\nfunc %s%s %s { return %s(%s) }",
+				funcName, params, returnType, ptrVar, callArgs)
 			wrappers = append(wrappers, wrapperFunc)
 		} else {
-			wrapperFunc := fmt.Sprintf("func %s%s { %s(%s) }",
-				funcName, params, funcName+obfSuffix, callArgs)
+			ptrDecl := fmt.Sprintf("var %s = %s", ptrVar, funcName+obfSuffix)
+			wrappers = append(wrappers, ptrDecl)
+			wrapperFunc := fmt.Sprintf("//go:noinline\nfunc %s%s { %s(%s) }",
+				funcName, params, ptrVar, callArgs)
 			wrappers = append(wrappers, wrapperFunc)
 		}
 	}
@@ -1485,6 +1503,86 @@ func %s(%s int64) int64 {
 	_vm := vm.NewVM(_bc, _co)
 	return _vm.Run()
 }`, funcName, param, param, strings.Join(byteLits, ", "))
+}
+
+func (t *Transformer) injectAntiDisassembly(src string) string {
+	lines := strings.Split(src, "\n")
+	var result []string
+	inFuncBody := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "func ") && strings.HasSuffix(trimmed, "{") {
+			inFuncBody = true
+			result = append(result, line)
+			continue
+		}
+
+		if inFuncBody && trimmed == "}" {
+			inFuncBody = false
+			result = append(result, line)
+			continue
+		}
+
+		if inFuncBody && strings.HasPrefix(line, "\t") && !strings.HasPrefix(line, "\t\t") && trimmed != "" {
+			if t.rng.Float64() < 0.15 {
+				junkVar := stringcrypt.RandomIdent("_ad", 4)
+				junkSize := t.rng.Intn(32) + 8
+				result = append(result, fmt.Sprintf("\tvar %s [%d]byte; _ = %s", junkVar, junkSize, junkVar))
+			}
+		}
+
+		result = append(result, line)
+	}
+
+	return strings.Join(result, "\n")
+}
+
+func (t *Transformer) injectJunkStrings(src string) string {
+	junkStrings := []string{
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+		"0123456789abcdef0123456789abcdef",
+		"/usr/lib/libSystem.B.dylib",
+		"/proc/self/maps",
+		"\\x00\\x00\\x00\\x00",
+		"HKEY_LOCAL_MACHINE\\SOFTWARE",
+		"C:\\Windows\\System32\\ntdll.dll",
+		"SELECT * FROM users WHERE id=?",
+		"Content-Type: application/json",
+		"Mozilla/5.0 (Windows NT 10.0)",
+		"-----BEGIN RSA PRIVATE KEY-----",
+		"192.168.1.1:8080",
+		"admin@localhost",
+		"Bearer eyJhbGciOiJIUzI1NiJ9",
+		"application/x-www-form-urlencoded",
+	}
+
+	numJunk := t.rng.Intn(6) + 4
+	var junkBlock strings.Builder
+	junkBlock.WriteString("\nvar _junkData = [...]string{\n")
+	for i := 0; i < numJunk; i++ {
+		idx := t.rng.Intn(len(junkStrings))
+		junkBlock.WriteString(fmt.Sprintf("\t%q,\n", junkStrings[idx]))
+	}
+	junkBlock.WriteString("}\n")
+	junkBlock.WriteString("var _ = _junkData\n")
+
+	insertAt := findImportBlockEnd(src)
+	if insertAt == -1 {
+		pkgIdx := strings.Index(src, "package ")
+		if pkgIdx != -1 {
+			lineEnd := strings.Index(src[pkgIdx:], "\n")
+			if lineEnd != -1 {
+				insertAt = pkgIdx + lineEnd + 1
+			}
+		}
+	}
+	if insertAt != -1 && insertAt < len(src) {
+		src = src[:insertAt] + junkBlock.String() + src[insertAt:]
+	}
+
+	return src
 }
 
 func (t *Transformer) ensureImport(src string, importPath string) string {
