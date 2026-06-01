@@ -4,13 +4,22 @@ func Check() bool {
 	if checkMemoryMaps() {
 		return true
 	}
+	if ScanMemoryMapsForFrida() {
+		return true
+	}
 	if checkUnixSockets() {
+		return true
+	}
+	if ScanNamedPipesForFrida() {
 		return true
 	}
 	if checkFridaPort() {
 		return true
 	}
 	if checkThreadNames() {
+		return true
+	}
+	if ScanThreadsForFrida() {
 		return true
 	}
 	if checkLoadedImages() {

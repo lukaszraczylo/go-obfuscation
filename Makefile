@@ -9,7 +9,7 @@ SEED          := $(shell date +%s%N)
 
 GARBLE        := $(shell go env GOPATH)/bin/garble
 
-.PHONY: all clean normal obfuscated compare transformer inthash help run run-normal test verify lint vet fmt
+.PHONY: all clean normal obfuscated compare transformer inthash pure-syscall help run run-normal test verify lint vet fmt
 
 help:
 	@echo "Targets:"
@@ -25,6 +25,7 @@ help:
 	@echo "  make lint        - gofmt + go vet"
 	@echo "  make fmt         - gofmt -w on all sources"
 	@echo "  make clean       - Remove build artifacts"
+	@echo "  make pure-syscall - Build with minimal libc linkage (CGO_ENABLED=0)"
 
 all: obfuscated
 
@@ -80,6 +81,17 @@ obfuscated: transformer
 inthash:
 	@echo "=== Building integrity hash tool ==="
 	go build -buildvcs=false -o $(BUILD_DIR)/inthash ./cmd/inthash
+
+pure-syscall: transformer
+	@echo "=== Pure-syscall build (minimal libc linkage) ==="
+	@mkdir -p $(BUILD_DIR)
+	@rm -rf $(OBFUSCATED)
+	$(BUILD_DIR)/transformer -src $(SRC_DIR) -dst $(OBFUSCATED)/$(APP_NAME) -seed=$(SEED)
+	CGO_ENABLED=0 go build -buildvcs=false -trimpath \
+		-ldflags="-s -w -buildid= -extldflags=-Wl,--exclude-libs,ALL" \
+		-o $(BUILD_DIR)/$(APP_NAME)-syscall \
+		./$(OBFUSCATED)/$(APP_NAME)
+	@echo "Built: $(BUILD_DIR)/$(APP_NAME)-syscall"
 
 normal:
 	@echo "=== Building normal (unobfuscated) binary ==="

@@ -29,7 +29,7 @@ var fakeFuncTemplates = []fakeFuncTemplate{
 		bodyGen: func(rng *rand.Rand, arg string) string {
 			v1 := stringcrypt.RandomIdent("_v", 3)
 			v2 := stringcrypt.RandomIdent("_v", 3)
-			return fmt.Sprintf("\t_ = %s\n\t%s := len(%s)\n\t%s := %s & 0xFF\n\treturn %s > 100 && %s < 0",
+			return fmt.Sprintf("\t_ = %s\n\t%s := len(%s)\n\t%s := %s[0] & 0xFF\n\treturn %s > 100 && %s < 0",
 				arg, v1, arg, v2, arg, v1, v2)
 		},
 	},

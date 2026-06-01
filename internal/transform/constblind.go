@@ -141,6 +141,9 @@ func cbBlindHex(match string, rng *rand.Rand, helperName string) string {
 
 	key := rng.Uint64() | 1
 	blinded := key ^ val
+	if key > 0x7FFFFFFFFFFFFFFF || blinded > 0x7FFFFFFFFFFFFFFF {
+		return match
+	}
 	return fmt.Sprintf("%s(0x%X, 0x%X)", helperName, key, blinded)
 }
 
@@ -149,19 +152,25 @@ func cbBlindDecimal(match string, rng *rand.Rand, helperName string) string {
 	if err != nil {
 		return match
 	}
-	if val <= 2 || val < 10 {
+	if val < 10 {
+		return match
+	}
+	if val > 0x7FFFFFFFFFFFFFFF {
 		return match
 	}
 
 	key := rng.Uint64() | 1
 	blinded := key ^ val
+	if key > 0x7FFFFFFFFFFFFFFF || blinded > 0x7FFFFFFFFFFFFFFF {
+		return match
+	}
 	return fmt.Sprintf("%s(0x%X, 0x%X)", helperName, key, blinded)
 }
 
 func injectBlindHelper(src string, helperName string) string {
 	helper := fmt.Sprintf(`
 //go:noinline
-func %s(a, b uint64) uint64 { return a ^ b }
+func %s(a, b int) int { return a ^ b }
 `, helperName)
 
 	insertAt := findImportBlockEnd(src)
