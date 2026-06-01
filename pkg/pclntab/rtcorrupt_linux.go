@@ -91,19 +91,8 @@ func findPclntabELF(f *elf.File) ([]byte, uintptr, uintptr, error) {
 	return nil, 0, 0, fmt.Errorf("pclntab: .gopclntab section not found in memory")
 }
 
-func mprotectRW(addr uintptr, size uintptr) error {
-	return syscall.Mprotect(
-		(*[1]byte)(unsafe.Pointer(addr))[:size:size],
-		syscall.PROT_READ|syscall.PROT_WRITE,
-	)
-}
-
-func mprotectRO(addr uintptr, size uintptr) {
-	_ = syscall.Mprotect(
-		(*[1]byte)(unsafe.Pointer(addr))[:size:size],
-		syscall.PROT_READ,
-	)
-}
+// mprotectRW and mprotectRO live in rtcorrupt_unsafe.go (built for darwin + linux).
+// They are intentionally not redeclared here.
 
 func findMemoryNameRegion(data []byte) (uint32, uint32) {
 	tab := &pclntabParser{data: data}

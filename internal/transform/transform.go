@@ -36,17 +36,32 @@ type Config struct {
 	VirtualizeFunctions bool
 	AntiDisassembly     bool
 	JunkStrings         bool
+	ConstantBlind       bool
+	ApplyMBA            bool
+	FakeSignatures      bool
+	FunctionSplit       bool
+	ReorderBasicBlocks  bool
 }
 
 func DefaultConfig() Config {
 	return Config{
-		EncryptStrings:    true,
-		InjectOpaquePreds: true,
-		InjectDeadCode:    true,
-		RandomizeOrder:    true,
-		IndirectDispatch:  true,
-		BogusControlFlow:  true,
-		FlattenControl:    true,
+		EncryptStrings:      true,
+		InjectOpaquePreds:   true,
+		InjectDeadCode:      true,
+		RandomizeOrder:      true,
+		IndirectDispatch:    true,
+		BogusControlFlow:    true,
+		FlattenControl:      true,
+		SpliceCode:          true,
+		InjectBuildID:       true,
+		VirtualizeFunctions: true,
+		AntiDisassembly:     true,
+		JunkStrings:         true,
+		ConstantBlind:       true,
+		ApplyMBA:            true,
+		FakeSignatures:      true,
+		FunctionSplit:       true,
+		ReorderBasicBlocks:  true,
 	}
 }
 
@@ -115,6 +130,26 @@ func (t *Transformer) TransformFile(srcPath, dstPath string) error {
 		result = t.flattenSimpleFunctions(result)
 	}
 
+	if t.config.FunctionSplit {
+		result = SplitFunctions(result)
+	}
+
+	if t.config.ReorderBasicBlocks {
+		result = ReorderBasicBlocks(result)
+	}
+
+	if t.config.ConstantBlind {
+		result = TransformConstants(result)
+	}
+
+	if t.config.ApplyMBA {
+		result = TransformMBA(result)
+	}
+
+	if t.config.FakeSignatures {
+		result = InjectFakeSignatures(result)
+	}
+
 	if t.config.InjectBuildID && strings.HasSuffix(srcPath, "main.go") {
 		result = t.injectBuildID(result)
 	}
@@ -130,8 +165,6 @@ func (t *Transformer) TransformFile(srcPath, dstPath string) error {
 	if t.config.JunkStrings {
 		result = t.injectJunkStrings(result)
 	}
-
-	result = SplitLongStrings(result)
 
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(dstPath), err)
@@ -1066,13 +1099,6 @@ func extractArgNames(argStr string) []string {
 		}
 	}
 	return names
-}
-
-func trimFirstParen(s string) string {
-	if len(s) > 0 && s[0] == '(' {
-		return s
-	}
-	return "(" + s
 }
 
 func (t *Transformer) spliceCode(src string) string {

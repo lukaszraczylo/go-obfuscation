@@ -25,6 +25,12 @@ func main() {
 	virtualizeVM := flag.Bool("vm", true, "Virtualize simple functions into VM bytecode")
 	antiDisasm := flag.Bool("anti-disasm", true, "Inject anti-disassembly patterns")
 	junkStrings := flag.Bool("junk-strings", true, "Inject junk string constants")
+	spliceCode := flag.Bool("splice", true, "Splice function bodies into fragments")
+	constBlind := flag.Bool("constblind", true, "Replace integer constants with XOR-decrypted expressions")
+	mba := flag.Bool("mba", true, "Apply Mixed Boolean-Arithmetic substitutions")
+	fakeSigs := flag.Bool("fakesigs", true, "Inject fake function signatures")
+	funcSplit := flag.Bool("funcsplit", true, "Split eligible functions into state-machine fragments")
+	bbReorder := flag.Bool("bbreorder", true, "Reorder basic blocks (swap if/else, shuffle switch cases)")
 	flag.Parse()
 
 	if *srcDir == "" || *dstDir == "" {
@@ -62,6 +68,12 @@ func main() {
 		VirtualizeFunctions: *virtualizeVM,
 		AntiDisassembly:     *antiDisasm,
 		JunkStrings:         *junkStrings,
+		SpliceCode:          *spliceCode,
+		ConstantBlind:       *constBlind,
+		ApplyMBA:            *mba,
+		FakeSignatures:      *fakeSigs,
+		FunctionSplit:       *funcSplit,
+		ReorderBasicBlocks:  *bbReorder,
 	}
 
 	t := transform.New(config)

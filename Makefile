@@ -9,7 +9,7 @@ SEED          := $(shell date +%s%N)
 
 GARBLE        := $(shell go env GOPATH)/bin/garble
 
-.PHONY: all clean normal obfuscated compare transformer help run run-normal
+.PHONY: all clean normal obfuscated compare transformer inthash help run run-normal test verify lint vet fmt
 
 help:
 	@echo "Targets:"
@@ -17,8 +17,13 @@ help:
 	@echo "  make normal      - Build normal binary for comparison"
 	@echo "  make compare     - Build both and compare"
 	@echo "  make transformer - Build only the transformer tool"
+	@echo "  make inthash     - Build only the integrity hash tool"
 	@echo "  make run         - Run the obfuscated binary"
 	@echo "  make run-normal  - Run the normal binary"
+	@echo "  make test        - Run all package tests"
+	@echo "  make verify      - go vet + go test (CI gate)"
+	@echo "  make lint        - gofmt + go vet"
+	@echo "  make fmt         - gofmt -w on all sources"
 	@echo "  make clean       - Remove build artifacts"
 
 all: obfuscated
@@ -113,3 +118,19 @@ run-normal: normal
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+fmt:
+	@echo "=== gofmt ==="
+	@find . -name '*.go' -not -path './build/*' -print0 | xargs -0 gofmt -l -w
+
+vet:
+	@echo "=== go vet ==="
+	go vet -unsafeptr=false ./...
+
+test:
+	@echo "=== go test ==="
+	go test ./...
+
+lint: fmt vet
+
+verify: vet test

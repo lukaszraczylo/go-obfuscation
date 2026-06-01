@@ -152,42 +152,60 @@ var mbaOrIdentities = []mbaIdentity{
 }
 
 func mbaApplyBinOp(line string, re *regexp.Regexp, identities []mbaIdentity, rng *rand.Rand) string {
-	// Track positions already transformed to avoid double-transforming
-	var transformed []struct{ start, end int }
+	// Use FindAllStringSubmatchIndex so we know the exact position of each match
+	// in the line. FindStringIndex on the match alone only gives a position relative
+	// to the match, not the line, which previously caused us to mis-attribute
+	// already-transformed ranges (the bug: strings.Index(line, match) returns the
+	// first occurrence, not the current one).
+	type range_ struct{ start, end int }
+	var transformed []range_
 
-	return re.ReplaceAllStringFunc(line, func(match string) string {
-		loc := re.FindStringIndex(match)
-		if loc == nil {
-			return match
+	// Mutate the line by recording each replacement and applying in a second pass.
+	// We can't use ReplaceAllStringFunc alone because we need the absolute position.
+	matches := re.FindAllStringSubmatchIndex(line, -1)
+	if len(matches) == 0 {
+		return line
+	}
+
+	type repl struct {
+		start, end int
+		text       string
+	}
+	var repls []repl
+
+	for _, loc := range matches {
+		fullStart, fullEnd := loc[0], loc[1]
+		if fullEnd > len(line) {
+			continue
 		}
+		match := line[fullStart:fullEnd]
 
-		// Check if this match overlaps with any already-transformed region
-		absStart := strings.Index(line, match)
+		// Overlap with already-transformed region?
+		overlap := false
 		for _, t := range transformed {
-			if absStart >= t.start && absStart < t.end {
-				return match
+			if fullStart < t.end && fullEnd > t.start {
+				overlap = true
+				break
 			}
+		}
+		if overlap {
+			continue
 		}
 
 		sub := re.FindStringSubmatch(match)
 		if len(sub) < 3 {
-			return match
+			continue
 		}
 		a, b := sub[1], sub[2]
-
-		// Don't transform if either operand looks like a comparison result or is empty
 		if a == "" || b == "" {
-			return match
+			continue
 		}
-
-		// Don't transform pure integer-integer operations (e.g., 2 + 3)
-		// Those are constant-folded by the compiler anyway
+		// Constant-folded by the compiler, no point in transforming.
 		if isPureNumeric(a) && isPureNumeric(b) {
-			return match
+			continue
 		}
 
 		ident := identities[rng.Intn(len(identities))]
-
 		var result string
 		switch len(strings.Split(ident.template, "%s")) - 1 {
 		case 2:
@@ -202,8 +220,24 @@ func mbaApplyBinOp(line string, re *regexp.Regexp, identities []mbaIdentity, rng
 			result = fmt.Sprintf(ident.template, a, b)
 		}
 
-		return result
-	})
+		repls = append(repls, repl{start: fullStart, end: fullEnd, text: result})
+		transformed = append(transformed, range_{fullStart, fullEnd})
+	}
+
+	if len(repls) == 0 {
+		return line
+	}
+
+	var buf strings.Builder
+	buf.Grow(len(line))
+	cursor := 0
+	for _, r := range repls {
+		buf.WriteString(line[cursor:r.start])
+		buf.WriteString(r.text)
+		cursor = r.end
+	}
+	buf.WriteString(line[cursor:])
+	return buf.String()
 }
 
 func mbaApplyUnaryNot(line string, rng *rand.Rand) string {

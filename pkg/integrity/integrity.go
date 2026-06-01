@@ -27,12 +27,24 @@ func SetExpectedHash(hash [32]byte) {
 	hashIsSet = true
 }
 
+// ClearExpectedHash disables integrity verification until the next
+// SetExpectedHash call. Use this in test teardown or runtime toggles.
+func ClearExpectedHash() {
+	mu.Lock()
+	defer mu.Unlock()
+	expectedHash = [32]byte{}
+	hashIsSet = false
+}
+
 func SetExpectedHashHex(hex string) error {
+	if len(hex) != 64 {
+		return fmt.Errorf("integrity: invalid hash hex length %d, want 64", len(hex))
+	}
 	var hash [32]byte
 	for i := 0; i < 32; i++ {
 		_, err := fmt.Sscanf(hex[i*2:i*2+2], "%x", &hash[i])
 		if err != nil {
-			return fmt.Errorf("integrity: invalid hash hex: %w", err)
+			return fmt.Errorf("integrity: invalid hash hex at byte %d: %w", i, err)
 		}
 	}
 	SetExpectedHash(hash)

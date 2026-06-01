@@ -251,7 +251,7 @@ func injectFakeEntries(data []byte) []byte {
 }
 
 func readUint(data []byte, offset int, size int) uint64 {
-	if offset+size > len(data) {
+	if offset < 0 || offset+size > len(data) {
 		return 0
 	}
 	switch size {

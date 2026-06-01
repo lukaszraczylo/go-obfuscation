@@ -575,17 +575,52 @@ The `make compare` target verifies all of these are hidden in the obfuscated bin
 
 ```bash
 # Run all package tests
-go test ./pkg/...
+go test ./...
 
-# VM tests (23 tests: arithmetic, bitwise, comparisons, jumps, callouts, determinism, junk opcodes)
-go test ./pkg/vm/ -v
+# Run all tests fresh (no cache)
+go test -count=1 ./...
 
-# Syscall obfuscation tests
-go test ./pkg/syscallobf/ -v
-
-# Vet all source
-go vet ./...
+# CI gate: vet + test in one step
+make verify
 ```
+
+### Test Coverage
+
+| Package | Tests | Focus |
+|---|---|---|
+| `internal/transform` | 28 | MBA, constant blinding, fake signatures, function splitting, basic-block reorder, opaque predicates, junk strings, splice, dead code |
+| `pkg/strenc` | 7 | Per-binary key derivation, XOR stream, seed determinism |
+| `pkg/stringcrypt` | 7 | CFB mode round-trip, padding, tamper detection |
+| `pkg/pageman` | 14 | Page alignment, mprotect guards, size math, write-after-guard |
+| `pkg/integrity` | 14 | SHA-256 of binary, hash hex round-trip, `ClearExpectedHash` for runtime toggling |
+| `pkg/pclntab` | 12 | `readUint` bounds (incl. negative offset), parser validation, scramble, corrupt, encrypt |
+| `pkg/antisandbox` | 6 | Hostname/MAC lists, `Check`/`CheckNetwork` delegation, no-panic on non-Linux |
+| `pkg/antiemul` | 6 | `Check`/`checkCoreCount`/`checkMemory`/`checkUptime`/`checkTiming` no-panic; 1M-iter timing guard |
+| `pkg/vm` | 21 | Arithmetic, bitwise, comparisons, jumps, callouts, determinism, junk opcodes |
+| `pkg/syscallobf` | 3 | Syscall number resolution, table integrity |
+
+Packages without tests: `pkg/antidbi`, `pkg/antidebug`, `pkg/antivm`, `pkg/typewipe`, `cmd/*`. These rely on the platform-specific or runtime-coupled nature of their operations.
+
+### Makefile Targets
+
+```bash
+make help        # List all targets with descriptions
+make all         # Build obfuscated binary (default)
+make obfuscated  # Full pipeline: transform + garble + integrity hash
+make normal      # Build unobfuscated binary for comparison
+make compare     # Build both and print size/symbol/string comparison
+make transformer # Build only the transformer tool
+make inthash     # Build only the integrity hash tool
+make run         # Build and run obfuscated binary
+make run-normal  # Build and run unobfuscated binary
+make test        # Run all package tests
+make verify      # go vet + go test (CI gate)
+make lint        # gofmt + go vet
+make fmt         # gofmt -w on all sources (skips build/)
+make clean       # Remove build artifacts
+```
+
+Note: `make vet` runs `go vet -unsafeptr=false` — the only legitimate `uintptr→pointer` conversion in the project is the darwin antidebug hook in `pkg/antidebug/antidebug_hook_darwin.go`, which reads function prologues for debugger detection.
 
 ## Requirements
 

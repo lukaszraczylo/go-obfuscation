@@ -107,11 +107,8 @@ func readAddr(addr uintptr, size int) []byte {
 		return nil
 	}
 	buf := make([]byte, size)
-	var src []byte
-	sh := (*reflect.SliceHeader)(unsafe.Pointer(&src))
-	sh.Data = addr
-	sh.Len = size
-	sh.Cap = size
+	a := addr
+	src := unsafe.Slice((*byte)(unsafe.Pointer(a^0)), size)
 	copy(buf, src)
 	return buf
 }
